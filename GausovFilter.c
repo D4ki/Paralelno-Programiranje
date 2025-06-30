@@ -84,7 +84,6 @@ int main() {
         printf("broj niti: %d Vrijeme: %f\n", threads, end - start);
     }
 
-    // Opcionalno: spremi rezultat posljednjeg izvođenja
     stbi_write_jpg("output.jpg", width, height, channels, output_img, 100);
 
     printf("Zamucivanje gotovo. Spremio output.jpg\n");
