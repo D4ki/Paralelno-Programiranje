@@ -1,39 +1,74 @@
 import cv2
 import numpy as np
-from concurrent.futures import ThreadPoolExecutor
+import math
 import time
+from multiprocessing import Pool, cpu_count
 
-def apply_gaussian_to_row(row_index, image, ksize, sigma):
-    row = image[row_index:row_index + 1, :]
-    blurred_row = cv2.GaussianBlur(row, ksize, sigma)
-    return row_index, blurred_row
+def gaussian_kernel(size: int, sigma: float):
+    kernel = [[0.0 for _ in range(size)] for _ in range(size)]
+    mean = size // 2
+    sum_val = 0.0
 
-def parallel_gaussian_blur(image, ksize=(11,11), sigma=5.5, max_workers=4):
-    output = np.zeros_like(image)
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(apply_gaussian_to_row, i, image, ksize, sigma) for i in range(image.shape[0])]
-        for f in futures:
-            i, blurred = f.result()
-            output[i] = blurred
-    return output
+    for x in range(size):
+        for y in range(size):
+            exponent = -((x - mean) ** 2 + (y - mean) ** 2) / (2 * sigma ** 2)
+            kernel[x][y] = math.exp(exponent) / (2 * math.pi * sigma ** 2)
+            sum_val += kernel[x][y]
 
-img = cv2.imread("Gauss.jpg")
+    for x in range(size):
+        for y in range(size):
+            kernel[x][y] /= sum_val
 
-thread_counts = [1, 2, 4, 8]
-blurred_img = None
+    return kernel
 
-for threads in thread_counts:
-    start_time = time.time()
-    blurred_img = parallel_gaussian_blur(img, max_workers=threads)
-    end_time = time.time()
+def process_row(args):
+    row_index, image, kernel = args
+    height, width, channels = len(image), len(image[0]), len(image[0][0])
+    ksize = len(kernel)
+    offset = ksize // 2
+    new_row = [[0 for _ in range(channels)] for _ in range(width)]
 
-    print(f"Broj niti: {threads}, Vrijeme izvođenja: {end_time - start_time:.4f} sekundi")
+    for x in range(width):
+        for c in range(channels):
+            val = 0.0
+            for ky in range(ksize):
+                for kx in range(ksize):
+                    iy = min(max(row_index + ky - offset, 0), height - 1)
+                    ix = min(max(x + kx - offset, 0), width - 1)
+                    val += image[iy][ix][c] * kernel[ky][kx]
+            new_row[x][c] = int(val)
 
-cv2.imwrite("output.jpg", blurred_img)
-print("Slika spremljena kao: output.jpg")
+    return row_index, new_row
 
-cv2.imshow("Output", blurred_img)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+def parallel_gaussian_blur(image, ksize=5, sigma=1.5, num_workers=cpu_count()):
+    kernel = gaussian_kernel(ksize, sigma)
+    height, width, channels = image.shape
+
+    image_list = [[[int(image[y][x][c]) for c in range(channels)] for x in range(width)] for y in range(height)]
+
+    args = [(row, image_list, kernel) for row in range(height)]
+
+    output = [[[0 for _ in range(channels)] for _ in range(width)] for _ in range(height)]
+
+    with Pool(processes=num_workers) as pool:
+        for row_index, new_row in pool.map(process_row, args):
+            output[row_index] = new_row
+
+    return np.array(output, dtype=np.uint8)
 
 
+if __name__ == "__main__":
+    img = cv2.imread("Gauss.jpg")
+
+    thread_counts = [1, 2, 4, 8]
+    blurred_img = None
+
+    for threads in thread_counts:
+        start_time = time.time()
+        blurred_img = parallel_gaussian_blur(img, ksize=5, sigma=1.5, num_workers=threads)
+        end_time = time.time()
+
+        print(f"Broj procesa: {threads}, Vrijeme izvođenja: {end_time - start_time:.4f} sekundi")
+
+    cv2.imwrite("output.jpg", blurred_img)
+    print("Slika spremljena kao: output.jpg")
